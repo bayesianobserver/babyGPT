@@ -41,6 +41,10 @@ class GPT(nn.Module):
     	loss = None
     	if targets is not None:
         	loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+        	# suppose t = 5. Then logits is of size (5, d_embed), so logits.size(-1) = d_embed, so the firs term will be of size (5,3)
+        	# This means targets needs to be of size 5. 
+        	# During training in demo.ipynb, x and y are both of length 11. 
+        	# But because of the attn mask, each element of y can only be predicted using elements at or before that position in x. 
     	return logits, loss
 
 

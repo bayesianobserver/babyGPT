@@ -62,7 +62,7 @@ class Trainer:
         model, config = self.model, self.config
 
         # setup the optimizer
-        self.optimizer = torch.optim.AdamW(model.parameters(), lr=2e-3)
+        self.optimizer = torch.optim.AdamW(model.parameters(), lr=5e-4)
 
 
         # setup the dataloader
