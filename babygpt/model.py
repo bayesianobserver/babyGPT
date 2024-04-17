@@ -1,25 +1,22 @@
 # Minimalist GPT model with a fixed architecture
-# 3 layes
-# 3 heads
-# d_embed = 12
-# layerNormBefore: True 
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
-class BERT(nn.Module): 
-    def __init__(self, d_embed, n_head, num_layers, vocab_size, seq_length):
+class GPT(nn.Module): 
+    def __init__(self, d_embed, n_head, num_layers, vocab_size, block_size):
         super().__init__()
         self.d_embed = d_embed
         self.n_head = n_head
         self.num_layers = num_layers
         self.vocab_size = vocab_size
-        self.seq_length = seq_length
-        self.wte = nn.Embedding(self.vocab_size + 1, self.d_embed)
-        self.wpe = nn.Embedding(self.seq_length, self.d_embed)
+        self.block_size = block_size
+        self.wte = nn.Embedding(self.vocab_size, self.d_embed)
+        self.wpe = nn.Embedding(self.block_size, self.d_embed)
         self.dropout = nn.Dropout(0.1)
+        self.causal_mask = nn.Transformer.generate_square_subsequent_mask(sz = self.block_size)
         transformer_encoder_layer = nn.TransformerEncoderLayer(d_model = self.d_embed,
         														nhead=self.n_head,
         														dim_feedforward=self.d_embed * 4,
@@ -31,29 +28,33 @@ class BERT(nn.Module):
         self.layer_norm = nn.LayerNorm(self.d_embed)
         self.lmhead = nn.Linear(self.d_embed, self.vocab_size)
         
-    def forward(self, idx, targets = None, mask = None):
-        pos = torch.arange(self.seq_length)
-        te = self.wte(idx) 
-        pe = self.wpe(pos)
-        x = te + pe
-        x = self.transformer_encoder(x)
-        x = self.layer_norm(x)
-        logits = self.lmhead(x)
-
-        # if we are given some desired targets also calculate the loss
-        loss = None
-        if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction = 'none')
-            if mask is not None:
-                loss = loss[mask.view(-1)]
-                loss = loss.mean()
-        return logits, loss
+    def forward(self, idx, targets = None):
+    	b, t = idx.size()
+    	assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
+    	pos = torch.arange(0, t, dtype=torch.long).unsqueeze(0) # shape (1, t)
+    	te = self.wte(idx) 
+    	pe = self.wpe(pos)
+    	x = te + pe
+    	x = self.transformer_encoder(x, mask = self.causal_mask, is_causal = True)
+    	x = self.layer_norm(x)
+    	logits = self.lmhead(x)
+    	loss = None
+    	if targets is not None:
+        	loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+    	return logits, loss
 
 
-      
     @torch.no_grad()
-    def generate_output(self, idx): 
-        ''' Simply calls the forward method, and converts the logits into the most likely tokens'''
-        x = self.forward(idx)[0]
-        x = x.argmax(dim = 2)
-        return x
+    def generate(self, idx, num_tokens, do_sample): 
+        # generate num_tokens new tokens, using self.block_size last 
+        for _ in range(num_tokens):
+        	idx_cond = idx if idx.size(1) <= self.block_size else idx[:, -self.block_size:]
+        	token_logits, _ = self(idx_cond)
+        	token_logits = token_logits[:, -1, :]
+        	probs = F.softmax(token_logits, dim = -1)
+        	if do_sample:
+        		idx_next = torch.multinomial(probs, num_samples=1)
+        	else:
+        		_, idx_next = torch.topk(probs, k=1, dim=-1)
+        	idx = torch.cat((idx, idx_next), dim=1)
+        return idx
